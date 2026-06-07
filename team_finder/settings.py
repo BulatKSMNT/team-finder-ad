@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from decouple import config
 
@@ -21,6 +22,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    'users_app',
+    'projects_app',
+    'skills_app',
 ]
 
 MIDDLEWARE = [
@@ -34,7 +38,8 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "team_finder.urls"
-
+# TASK_VERSION = os.getenv('TASK_VERSION', '3')
+# TEMPLATE_FOLDER = os.path.join(BASE_DIR, f'templates_var{TASK_VERSION}')
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
