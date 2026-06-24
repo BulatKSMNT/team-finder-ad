@@ -11,62 +11,79 @@
 {% block content %}
 <div class="profile-edit-container">
     <h2 class="form-title">Редактирование профиля</h2>
-    <form method="post" enctype="multipart/form-data" class="profile-edit-form">
+
+    <form method="post"
+          action="{% url 'users:edit_profile' %}"
+          enctype="multipart/form-data"
+          class="profile-edit-form">
         {% csrf_token %}
+
+        {{ form.non_field_errors }}
 
         <div class="avatar-upload">
             <div class="avatar-preview">
-                {% if user.avatar %}
-                    <img src="{{ user.avatar.url }}" alt="Аватар">
+                {% if request.user.avatar %}
+                    <img src="{{ request.user.avatar.url }}" alt="Аватар">
                 {% else %}
-                    <img src="{% static 'images/default-avatar.png' %}" alt="Аватар по умолчанию">
+                    <img src="{% static 'images/default-avatar.png' %}" alt="Аватар">
                 {% endif %}
+
                 <div class="overlay">
-                    <button type="button" onclick="document.getElementById('id_avatar').click()">Заменить</button>
+                    <button type="button" onclick="document.getElementById('id_avatar').click()">
+                        Заменить
+                    </button>
                 </div>
             </div>
+
             {{ form.avatar }}
+            {{ form.avatar.errors }}
         </div>
 
         <div class="form-row">
             <div class="form-field">
                 {{ form.name.label_tag }}
                 {{ form.name }}
+                {{ form.name.errors }}
             </div>
+
             <div class="form-field">
                 {{ form.surname.label_tag }}
                 {{ form.surname }}
+                {{ form.surname.errors }}
             </div>
+        </div>
+
+        <div class="form-field">
+            {{ form.email.label_tag }}
+            {{ form.email }}
+            {{ form.email.errors }}
         </div>
 
         <div class="form-field">
             {{ form.about.label_tag }}
             {{ form.about }}
+            {{ form.about.errors }}
         </div>
 
         <div class="form-row">
             <div class="form-field">
                 {{ form.phone.label_tag }}
                 {{ form.phone }}
+                {{ form.phone.errors }}
             </div>
+
             <div class="form-field">
                 {{ form.github_url.label_tag }}
                 {{ form.github_url }}
+                {{ form.github_url.errors }}
             </div>
         </div>
 
-        {% if form.errors %}
-        <div class="form-errors">
-            {% for field, errors in form.errors.items %}
-                {% for error in errors %}
-                    <p>{{ error }}</p>
-                {% endfor %}
-            {% endfor %}
-        </div>
-        {% endif %}
-
         <div class="form-actions">
-            <a href="/users/{{ user.id }}" class="cancel-button">Отмена</a>
+            <a href="{% url 'users:profile' user_id=request.user.id %}" class="cancel-button">
+                Отмена
+            </a>
+
             <button type="submit" class="save-button">Сохранить</button>
         </div>
     </form>

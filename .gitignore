@@ -146,3 +146,15 @@ dmypy.json
 .ruff_cache/
 
 *.Identifier
+
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+media/
+.idea/
+.vscode/
+

@@ -1,22 +1,14 @@
-// Profile skills UI logic
-(function(){
+(function () {
   document.addEventListener("DOMContentLoaded", () => {
     const container = document.getElementById("skills-container");
     if (!container) return;
 
     const projectId = container.dataset.projectId;
-    const userId = container.dataset.userId;
+    if (!projectId) return;
 
-    let skillsUrl, addUrl, removeUrl;
-    if (userId) {
-      skillsUrl = `/users/skills/`;
-      addUrl = `/users/${userId}/skills/add/`;
-      removeUrl = (skillId) => `/users/${userId}/skills/${skillId}/remove/`;
-    } else {
-      skillsUrl = `/projects/skills/`;
-      addUrl = `/projects/${projectId}/skills/add/`;
-      removeUrl = (skillId) => `/projects/${projectId}/skills/${skillId}/remove/`;
-    }
+    const skillsUrl = "/projects/skills/";
+    const addUrl = `/projects/${projectId}/skills/add`;
+    const removeUrl = (skillId) => `/projects/${projectId}/skills/${skillId}/remove/`;
 
     const addBtn = document.getElementById("add-skill-btn");
     const inputWrapper = document.getElementById("skill-input-wrapper");
@@ -34,30 +26,41 @@
       input.focus();
     });
 
-    let t = null;
+    let timer = null;
+
     input.addEventListener("input", () => {
       const q = input.value.trim();
-      clearTimeout(t);
+
+      clearTimeout(timer);
+
       if (!q) {
         suggestions.classList.add("hidden");
         suggestions.innerHTML = "";
         return;
       }
-      t = setTimeout(async () => {
-        const res = await fetch(`${skillsUrl}?q=${encodeURIComponent(q)}`);
-        if (!res.ok) return;
-        const data = await res.json();
+
+      timer = setTimeout(async () => {
+        const response = await fetch(`${skillsUrl}?q=${encodeURIComponent(q)}`);
+
+        if (!response.ok) return;
+
+        const data = await response.json();
 
         suggestions.innerHTML = "";
-        data.forEach(s => {
+
+        data.forEach((skill) => {
           const li = document.createElement("li");
-          li.textContent = s.name;
-          li.dataset.id = s.id;
+          li.textContent = skill.name;
+          li.dataset.id = skill.id;
+          li.dataset.name = skill.name;
           li.className = "suggestion-item";
           suggestions.appendChild(li);
         });
 
-        const exact = data.some(s => s.name.toLowerCase() === q.toLowerCase());
+        const exact = data.some(
+          (skill) => skill.name.toLowerCase() === q.toLowerCase()
+        );
+
         if (!exact) {
           const liNew = document.createElement("li");
           liNew.textContent = `Создать «${q}»`;
@@ -70,61 +73,71 @@
       }, 200);
     });
 
-    suggestions.addEventListener("mousedown", async (e) => {
-      const li = e.target.closest("li");
+    suggestions.addEventListener("mousedown", async (event) => {
+      const li = event.target.closest("li");
       if (!li) return;
 
       if (li.classList.contains("create-new")) {
         await addSkillByName(li.dataset.name);
       } else if (li.dataset.id) {
-        await addSkillById(li.dataset.id);
+        await addSkillById(li.dataset.id, li.dataset.name);
       }
+
       hideInput();
     });
 
-    input.addEventListener("keydown", async (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
+    input.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+
         const q = input.value.trim();
         if (!q) return;
 
         const first = suggestions.querySelector("li");
+
         if (first && first.dataset.id) {
-          await addSkillById(first.dataset.id);
+          await addSkillById(first.dataset.id, first.dataset.name);
         } else {
           await addSkillByName(q);
         }
+
         hideInput();
       }
-      if (e.key === "Escape") {
+
+      if (event.key === "Escape") {
         hideInput();
       }
     });
 
-    input.addEventListener("blur", () => setTimeout(hideInput, 120));
+    input.addEventListener("blur", () => {
+      setTimeout(hideInput, 120);
+    });
 
-    function hideInput() {
-      inputWrapper.classList.add("hidden");
-      suggestions.classList.add("hidden");
-      addBtn.classList.remove("hidden");
-    }
+    container.addEventListener("click", async (event) => {
+      if (!event.target.classList.contains("remove-skill-btn")) return;
 
-    container.addEventListener("click", async (e) => {
-      if (e.target.classList.contains("remove-skill-btn")) {
-        const chip = e.target.closest(".skill-chip");
-        const skillId = chip.dataset.id;
-        const res = await fetch(removeUrl(skillId), {
-          method: "POST",
-          headers: { "X-CSRFToken": getCookie("csrftoken") }
-        });
-        if (res.ok) {
-          chip.remove();
-        }
+      const chip = event.target.closest(".skill-chip");
+      if (!chip) return;
+
+      const skillId = chip.dataset.id;
+
+      const response = await fetch(removeUrl(skillId), {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+      });
+
+      if (response.ok) {
+        chip.remove();
+        ensureEmptyText();
+      } else if (window.toast) {
+        window.toast("Ошибка при удалении навыка", { type: "error" });
       }
     });
 
-    async function addSkillById(skillId) {
-      const res = await fetch(addUrl, {
+    async function addSkillById(skillId, displayName) {
+      const response = await fetch(addUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -132,14 +145,17 @@
         },
         body: JSON.stringify({ skill_id: skillId }),
       });
-      if (res.ok) {
-        const skill = await res.json();
-        appendChip(skill.id, skill.name);
+
+      if (response.ok) {
+        const data = await response.json();
+        appendChip(data.skill_id, displayName);
+      } else if (window.toast) {
+        window.toast("Ошибка при добавлении навыка", { type: "error" });
       }
     }
 
     async function addSkillByName(name) {
-      const res = await fetch(addUrl, {
+      const response = await fetch(addUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -147,38 +163,79 @@
         },
         body: JSON.stringify({ name }),
       });
-      if (res.ok) {
-        const skill = await res.json();
-        appendChip(skill.id, skill.name);
+
+      if (response.ok) {
+        const data = await response.json();
+        appendChip(data.skill_id, name);
+      } else if (window.toast) {
+        window.toast("Ошибка при создании навыка", { type: "error" });
       }
     }
 
     function appendChip(id, name) {
       if (container.querySelector(`.skill-chip[data-id="${id}"]`)) return;
 
+      const empty = container.querySelector(".skill-empty");
+
+      if (empty) {
+        empty.remove();
+      }
+
       const chip = document.createElement("span");
       chip.className = "skill-chip";
       chip.dataset.id = id;
-      chip.innerHTML = `${name} <button type="button" class="remove-skill-btn" aria-label="Удалить" title="Удалить">×</button>`;
 
+      chip.appendChild(document.createTextNode(`${name} `));
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "remove-skill-btn";
+      removeButton.setAttribute("aria-label", "Удалить");
+      removeButton.title = "Удалить";
+      removeButton.textContent = "×";
+
+      chip.appendChild(removeButton);
       container.insertBefore(chip, addBtn);
+    }
 
-      const empty = container.querySelector(".skill-empty");
-      if (empty) empty.remove();
+    function ensureEmptyText() {
+      const hasSkills = container.querySelector(".skill-chip");
+
+      if (!hasSkills && !container.querySelector(".skill-empty")) {
+        const empty = document.createElement("span");
+        empty.className = "skill-empty";
+        empty.textContent = "Навыки не указаны";
+        container.insertBefore(empty, addBtn);
+      }
+    }
+
+    function hideInput() {
+      inputWrapper.classList.add("hidden");
+      suggestions.classList.add("hidden");
+      suggestions.innerHTML = "";
+      addBtn.classList.remove("hidden");
     }
 
     function getCookie(name) {
+      if (window.getCookie) {
+        return window.getCookie(name);
+      }
+
       let cookieValue = null;
+
       if (document.cookie && document.cookie !== "") {
         const cookies = document.cookie.split(";");
+
         for (let cookie of cookies) {
           cookie = cookie.trim();
+
           if (cookie.startsWith(name + "=")) {
             cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
             break;
           }
         }
       }
+
       return cookieValue;
     }
   });

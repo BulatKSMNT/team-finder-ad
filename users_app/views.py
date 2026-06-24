@@ -1,96 +1,121 @@
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth import login, authenticate, logout
-from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth import login, logout, update_session_auth_hash
+from django.contrib.auth.forms import PasswordChangeForm
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from .forms import StudentRegistrationForm, EditProfileForm
-from .models import SystemUser
-from django.contrib.auth.forms import PasswordChangeForm
-from django.contrib.auth import update_session_auth_hash
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
+
+from .forms import EditProfileForm, LoginForm, RegistrationForm
+from .models import User
 
 
-def register_student(request):
-    if request.method == 'POST':
-        form_data = StudentRegistrationForm(request.POST)
-        if form_data.is_valid():
-            new_student = form_data.save()
-            # login user immediately after registration
-            login(request, new_student)
-            return redirect('main_page')
+def register_user(request):
+    if request.method == "POST":
+        form = RegistrationForm(request.POST)
+
+        if form.is_valid():
+            form.save()
+            return redirect("users:login")
     else:
-        # just show empty form if GET request
-        form_data = StudentRegistrationForm()
+        form = RegistrationForm()
 
-    return render(request, 'users/register.html', {'form': form_data})
+    return render(request, "users/register.html", {"form": form})
 
 
-def login_student(request):
-    if request.method == 'POST':
-        form_data = AuthenticationForm(request, data=request.POST)
-        if form_data.is_valid():
-            found_user = form_data.get_user()
-            login(request, found_user)
-            return redirect('main_page')
+def login_user(request):
+    next_url = request.POST.get("next") or request.GET.get("next")
+
+    if request.method == "POST":
+        form = LoginForm(request, data=request.POST)
+
+        if form.is_valid():
+            login(request, form.get_user())
+
+            if next_url and url_has_allowed_host_and_scheme(
+                next_url,
+                allowed_hosts={request.get_host()},
+            ):
+                return redirect(next_url)
+
+            return redirect("projects:main_page")
     else:
-        form_data = AuthenticationForm()
+        form = LoginForm(request)
 
-    return render(request, 'users/login.html', {'form': form_data})
+    return render(
+        request,
+        "users/login.html",
+        {
+            "form": form,
+            "next": next_url,
+        },
+    )
 
 
-def logout_student(request):
+def logout_user(request):
     logout(request)
-    return redirect('main_page')
+    return redirect("projects:main_page")
 
 
 def users_directory(request):
-    # show all users from newest to oldest
-    all_users = SystemUser.objects.all().order_by('-date_joined')
+    participants = User.objects.filter(is_active=True).order_by("-date_joined")
 
-    # 12 profiles per page
-    page_maker = Paginator(all_users, 12)
-    page_num = request.GET.get('page')
-    paged_users = page_maker.get_page(page_num)
+    paginator = Paginator(participants, 12)
+    page_number = request.GET.get("page")
+    participants_page = paginator.get_page(page_number)
 
-    return render(request, 'users/participants.html', {'users_list': paged_users})
+    return render(
+        request,
+        "users/participants.html",
+        {
+            "participants": participants_page,
+        },
+    )
 
 
 def view_profile(request, user_id):
-    profile_owner = get_object_or_404(SystemUser, id=user_id)
-    user_projects = profile_owner.my_created_projects.all()
+    profile_user = get_object_or_404(User, id=user_id, is_active=True)
+    projects = (profile_user.owned_projects.all().
+                prefetch_related("participants", "skills"))
 
-    context_data = {
-        'profile_owner': profile_owner,
-        'projects': user_projects
-    }
-    # ИСПРАВИЛ НАЗВАНИЕ ШАБЛОНА ТУТ:
-    return render(request, 'users/user-details.html', context_data)
+    return render(
+        request,
+        "users/user-details.html",
+        {
+            "user": profile_user,
+            "profile_user": profile_user,
+            "projects": projects,
+        },
+    )
 
 
 @login_required
-def edit_my_profile(request):
-    if request.method == 'POST':
-        form_data = EditProfileForm(request.POST, request.FILES, instance=request.user)
-        if form_data.is_valid():
-            form_data.save()
-            return redirect('user_profile', user_id=request.user.id)
+def edit_profile(request):
+    if request.method == "POST":
+        form = EditProfileForm(
+            request.POST,
+            request.FILES,
+            instance=request.user,
+        )
+
+        if form.is_valid():
+            form.save()
+            return redirect("users:profile", user_id=request.user.id)
     else:
-        form_data = EditProfileForm(instance=request.user)
+        form = EditProfileForm(instance=request.user)
 
-    # ИСПРАВИЛ НАЗВАНИЕ ШАБЛОНА ТУТ:
-    return render(request, 'users/edit_profile.html', {'form': form_data})
+    return render(request, "users/edit_profile.html", {"form": form})
 
 
 @login_required
-def change_my_password(request):
-    # Logic for changing user password
-    if request.method == 'POST':
-        form_data = PasswordChangeForm(request.user, request.POST)
-        if form_data.is_valid():
-            user = form_data.save()
-            # update session so user is not logged out after password change
+def change_password(request):
+    if request.method == "POST":
+        form = PasswordChangeForm(request.user, request.POST)
+
+        if form.is_valid():
+            user = form.save()
             update_session_auth_hash(request, user)
-            return redirect('user_profile', user_id=request.user.id)
+            return redirect("users:profile", user_id=request.user.id)
     else:
-        form_data = PasswordChangeForm(request.user)
+        form = PasswordChangeForm(request.user)
 
-    return render(request, 'users/change_password.html', {'form': form_data})
+    return render(request, "users/change_password.html", {"form": form})

@@ -10,8 +10,13 @@
 {% block content %}
 <div class="auth-card">
     <h2>Вход в систему</h2>
-    <form method="post">
+
+    <form method="post" action="{% url 'users:login' %}">
         {% csrf_token %}
+
+        {% if next %}
+            <input type="hidden" name="next" value="{{ next }}">
+        {% endif %}
 
         {{ form.non_field_errors }}
 
@@ -29,6 +34,10 @@
 
         <button type="submit">Войти</button>
     </form>
-    <p class="auth-link">Нет аккаунта? <a href="{% url 'users:register' %}">Зарегистрироваться</a></p>
+
+    <p class="auth-link">
+        Нет аккаунта?
+        <a href="{% url 'users:register' %}">Зарегистрироваться</a>
+    </p>
 </div>
 {% endblock %}
