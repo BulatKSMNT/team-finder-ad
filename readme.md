@@ -440,5 +440,5 @@ http://127.0.0.1:8000/
 - управлять навыками.
 
 ---
-Автор: Хатыпов Булат 
-Github: BulatKSMNT
+- Автор: Хатыпов Булат 
+- Github: [BulatKSMNT](https://github.com/BulatKSMNT)
