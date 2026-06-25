@@ -1,46 +1,15 @@
-from django import forms
 from django.contrib import admin
+from django.contrib.admin.sites import NotRegistered
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.contrib.auth.forms import ReadOnlyPasswordHashField
 
+from .forms import AdminUserChangeForm, AdminUserCreationForm
 from .models import User
 
 
-class AdminUserCreationForm(forms.ModelForm):
-    password1 = forms.CharField(label="Пароль", widget=forms.PasswordInput)
-    password2 = forms.CharField(label="Повторите пароль",
-                                widget=forms.PasswordInput)
-
-    class Meta:
-        model = User
-        fields = ("email", "name", "surname")
-
-    def clean_password2(self):
-        password1 = self.cleaned_data.get("password1")
-        password2 = self.cleaned_data.get("password2")
-
-        if password1 and password2 and password1 != password2:
-            raise forms.ValidationError("Пароли не совпадают.")
-
-        return password2
-
-    def save(self, commit=True):
-        user = super().save(commit=False)
-        user.email = user.email.lower()
-        user.set_password(self.cleaned_data["password1"])
-
-        if commit:
-            user.save()
-
-        return user
-
-
-class AdminUserChangeForm(forms.ModelForm):
-    password = ReadOnlyPasswordHashField(label="Пароль")
-
-    class Meta:
-        model = User
-        fields = "__all__"
+try:
+    admin.site.unregister(User)
+except NotRegistered:
+    pass
 
 
 @admin.register(User)
@@ -48,14 +17,37 @@ class UserAdmin(BaseUserAdmin):
     form = AdminUserChangeForm
     add_form = AdminUserCreationForm
 
-    list_display = ("email", "surname", "name", "phone",
-                    "is_staff", "is_active")
-    list_filter = ("is_staff", "is_superuser", "is_active")
-    search_fields = ("email", "name", "surname", "phone")
+    list_display = (
+        "email",
+        "surname",
+        "name",
+        "phone",
+        "is_staff",
+        "is_active",
+    )
+    list_filter = (
+        "is_staff",
+        "is_superuser",
+        "is_active",
+    )
+    search_fields = (
+        "email",
+        "name",
+        "surname",
+        "phone",
+    )
     ordering = ("id",)
 
     fieldsets = (
-        (None, {"fields": ("email", "password")}),
+        (
+            None,
+            {
+                "fields": (
+                    "email",
+                    "password",
+                )
+            },
+        ),
         (
             "Личная информация",
             {
@@ -81,7 +73,15 @@ class UserAdmin(BaseUserAdmin):
                 )
             },
         ),
-        ("Даты", {"fields": ("last_login", "date_joined")}),
+        (
+            "Даты",
+            {
+                "fields": (
+                    "last_login",
+                    "date_joined",
+                )
+            },
+        ),
     )
 
     add_fieldsets = (
@@ -102,4 +102,7 @@ class UserAdmin(BaseUserAdmin):
         ),
     )
 
-    filter_horizontal = ("groups", "user_permissions")
+    filter_horizontal = (
+        "groups",
+        "user_permissions",
+    )

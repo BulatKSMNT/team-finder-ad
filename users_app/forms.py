@@ -1,35 +1,73 @@
 import re
-from urllib.parse import urlparse
 
 from django import forms
 from django.contrib.auth import authenticate
+from django.contrib.auth.forms import ReadOnlyPasswordHashField
+
+from team_finder.constants import PHONE_PATTERN
+from team_finder.form_mixins import GithubUrlValidationMixin
 
 from .models import User
+from .services import get_phone_uniqueness_variants, normalize_phone
 
 
-PHONE_RE = re.compile(r"^(8\d{10}|\+7\d{10})$")
+PHONE_RE = re.compile(PHONE_PATTERN)
 
 
-def normalize_phone(phone):
-    phone = phone.strip()
+class AdminUserCreationForm(forms.ModelForm):
+    password1 = forms.CharField(
+        label="Пароль",
+        widget=forms.PasswordInput,
+    )
+    password2 = forms.CharField(
+        label="Повторите пароль",
+        widget=forms.PasswordInput,
+    )
 
-    if phone.startswith("8"):
-        return "+7" + phone[1:]
+    class Meta:
+        model = User
+        fields = (
+            "email",
+            "name",
+            "surname",
+            "is_staff",
+            "is_active",
+        )
 
-    return phone
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip().lower()
+
+        if User.objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("Пользователь с таким email уже существует.")
+
+        return email
+
+    def clean_password2(self):
+        password1 = self.cleaned_data.get("password1")
+        password2 = self.cleaned_data.get("password2")
+
+        if password1 and password2 and password1 != password2:
+            raise forms.ValidationError("Пароли не совпадают.")
+
+        return password2
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.email = self.cleaned_data["email"].strip().lower()
+        user.set_password(self.cleaned_data["password1"])
+
+        if commit:
+            user.save()
+
+        return user
 
 
-def validate_github_url(value):
-    if not value:
-        return value
+class AdminUserChangeForm(forms.ModelForm):
+    password = ReadOnlyPasswordHashField(label="Пароль")
 
-    parsed = urlparse(value)
-    host = parsed.netloc.lower()
-
-    if host not in ("github.com", "www.github.com"):
-        raise forms.ValidationError("Ссылка должна вести на GitHub.")
-
-    return value
+    class Meta:
+        model = User
+        fields = "__all__"
 
 
 class RegistrationForm(forms.ModelForm):
@@ -41,27 +79,20 @@ class RegistrationForm(forms.ModelForm):
     class Meta:
         model = User
         fields = ("name", "surname", "email", "password")
-        labels = {
-            "name": "Имя",
-            "surname": "Фамилия",
-            "email": "Email",
-        }
 
     def clean_email(self):
         email = self.cleaned_data["email"].strip().lower()
 
         if User.objects.filter(email__iexact=email).exists():
-            raise forms.ValidationError("Пользователь "
-                                        "с таким email уже существует.")
+            raise forms.ValidationError("Пользователь с таким email уже существует.")
 
         return email
 
     def save(self, commit=True):
-        user = User(
-            email=self.cleaned_data["email"].strip().lower(),
-            name=self.cleaned_data["name"].strip(),
-            surname=self.cleaned_data["surname"].strip(),
-        )
+        user = super().save(commit=False)
+        user.email = self.cleaned_data["email"].strip().lower()
+        user.name = self.cleaned_data["name"].strip()
+        user.surname = self.cleaned_data["surname"].strip()
         user.set_password(self.cleaned_data["password"])
 
         if commit:
@@ -72,11 +103,15 @@ class RegistrationForm(forms.ModelForm):
 
 class LoginForm(forms.Form):
     email = forms.EmailField(label="Email")
-    password = forms.CharField(label="Пароль", widget=forms.PasswordInput)
+    password = forms.CharField(
+        label="Пароль",
+        widget=forms.PasswordInput,
+    )
 
     def __init__(self, request=None, *args, **kwargs):
         self.request = request
         self.user = None
+
         super().__init__(*args, **kwargs)
 
     def clean(self):
@@ -102,7 +137,7 @@ class LoginForm(forms.Form):
         return self.user
 
 
-class EditProfileForm(forms.ModelForm):
+class EditProfileForm(GithubUrlValidationMixin, forms.ModelForm):
     class Meta:
         model = User
         fields = (
@@ -114,15 +149,6 @@ class EditProfileForm(forms.ModelForm):
             "phone",
             "github_url",
         )
-        labels = {
-            "name": "Имя",
-            "surname": "Фамилия",
-            "email": "Email",
-            "avatar": "Аватар",
-            "about": "О себе",
-            "phone": "Телефон",
-            "github_url": "GitHub",
-        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -141,13 +167,12 @@ class EditProfileForm(forms.ModelForm):
         )
 
         if email_exists:
-            raise forms.ValidationError("Пользователь с таким "
-                                        "email уже существует.")
+            raise forms.ValidationError("Пользователь с таким email уже существует.")
 
         return email
 
     def clean_phone(self):
-        phone = self.cleaned_data["phone"].strip()
+        phone = (self.cleaned_data.get("phone") or "").strip()
 
         if not PHONE_RE.match(phone):
             raise forms.ValidationError(
@@ -155,20 +180,18 @@ class EditProfileForm(forms.ModelForm):
             )
 
         normalized_phone = normalize_phone(phone)
-        alternative_phone = "8" + normalized_phone[2:]
+        phone_variants = get_phone_uniqueness_variants(normalized_phone)
 
         phone_exists = (
             User.objects
-            .filter(phone__in=[normalized_phone, alternative_phone])
+            .filter(phone__in=phone_variants)
             .exclude(pk=self.instance.pk)
             .exists()
         )
 
         if phone_exists:
-            raise forms.ValidationError("Пользователь с таким "
-                                        "телефоном уже существует.")
+            raise forms.ValidationError(
+                "Пользователь с таким телефоном уже существует."
+            )
 
         return normalized_phone
-
-    def clean_github_url(self):
-        return validate_github_url(self.cleaned_data.get("github_url", ""))

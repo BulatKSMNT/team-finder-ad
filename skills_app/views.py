@@ -1,4 +1,4 @@
-import json
+from http import HTTPStatus
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
@@ -6,31 +6,18 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_GET, require_POST
 
 from projects_app.models import Project
+from projects_app.services import can_manage_project
+from team_finder.constants import (
+    SKILL_NAME_MAX_LENGTH,
+    SKILLS_SUGGESTIONS_LIMIT,
+)
+
 from .models import Skill
-
-
-def can_manage_project(user, project):
-    return (
-        user.is_authenticated
-        and (
-            project.owner_id == user.id
-            or user.is_staff
-            or user.is_superuser
-            or user.has_perm("projects_app.change_project")
-        )
-    )
-
-
-def get_request_data(request):
-    content_type = request.headers.get("content-type", "")
-
-    if content_type.startswith("application/json"):
-        try:
-            return json.loads(request.body.decode("utf-8") or "{}")
-        except json.JSONDecodeError:
-            return None
-
-    return request.POST
+from .services import (
+    get_existing_skill_by_name,
+    get_request_data,
+    is_skill_name_too_long,
+)
 
 
 @require_GET
@@ -44,7 +31,7 @@ def search_skills(request):
         Skill.objects
         .filter(name__istartswith=query)
         .order_by("name")
-        .values("id", "name")[:10]
+        .values("id", "name")[:SKILLS_SUGGESTIONS_LIMIT]
     )
 
     return JsonResponse(list(skills), safe=False)
@@ -56,12 +43,18 @@ def add_skill_to_project(request, project_id):
     project = get_object_or_404(Project, id=project_id)
 
     if not can_manage_project(request.user, project):
-        return JsonResponse({"error": "Недостаточно прав."}, status=403)
+        return JsonResponse(
+            {"error": "Недостаточно прав."},
+            status=HTTPStatus.FORBIDDEN,
+        )
 
     data = get_request_data(request)
 
     if data is None:
-        return JsonResponse({"error": "Некорректный JSON."}, status=400)
+        return JsonResponse(
+            {"error": "Некорректный JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
 
     skill_id = data.get("skill_id")
     skill_name = (data.get("name") or "").strip()
@@ -71,39 +64,38 @@ def add_skill_to_project(request, project_id):
     if skill_id:
         skill = get_object_or_404(Skill, id=skill_id)
     elif skill_name:
-        if len(skill_name) > 124:
+        if is_skill_name_too_long(skill_name):
             return JsonResponse(
-                {"error": "Название навыка не "
-                          "должно быть длиннее 124 символов."},
-                status=400,
+                {
+                    "error": (
+                        "Название навыка не должно быть длиннее "
+                        f"{SKILL_NAME_MAX_LENGTH} символов."
+                    )
+                },
+                status=HTTPStatus.BAD_REQUEST,
             )
 
-        existing_skill = Skill.objects.filter(name__iexact=skill_name).first()
+        skill = get_existing_skill_by_name(skill_name)
 
-        if existing_skill:
-            skill = existing_skill
-        else:
+        if skill is None:
             skill = Skill.objects.create(name=skill_name)
             created = True
     else:
         return JsonResponse(
             {"error": "Передайте skill_id или name."},
-            status=400,
+            status=HTTPStatus.BAD_REQUEST,
         )
 
     already_added = project.skills.filter(id=skill.id).exists()
 
-    if already_added:
-        added = False
-    else:
+    if not already_added:
         project.skills.add(skill)
-        added = True
 
     return JsonResponse(
         {
             "skill_id": skill.id,
             "created": created,
-            "added": added,
+            "added": not already_added,
         }
     )
 
@@ -114,14 +106,18 @@ def remove_skill_from_project(request, project_id, skill_id):
     project = get_object_or_404(Project, id=project_id)
 
     if not can_manage_project(request.user, project):
-        return JsonResponse({"error": "Недостаточно прав."}, status=403)
+        return JsonResponse(
+            {"error": "Недостаточно прав."},
+            status=HTTPStatus.FORBIDDEN,
+        )
 
     skill = get_object_or_404(Skill, id=skill_id)
+    skill_is_added = project.skills.filter(id=skill.id).exists()
 
-    if not project.skills.filter(id=skill.id).exists():
+    if not skill_is_added:
         return JsonResponse(
             {"error": "Этот навык не добавлен к проекту."},
-            status=400,
+            status=HTTPStatus.BAD_REQUEST,
         )
 
     project.skills.remove(skill)

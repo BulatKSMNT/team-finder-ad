@@ -1,32 +1,21 @@
+from http import HTTPStatus
+
 from django.contrib.auth.decorators import login_required
-from django.core.paginator import Paginator
-from django.http import JsonResponse, HttpResponseForbidden
+from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from skills_app.models import Skill
+from team_finder.constants import (
+    PROJECT_STATUS_CLOSED,
+    PROJECT_STATUS_OPEN,
+    PROJECTS_PER_PAGE,
+)
+from team_finder.services import paginate_queryset
+
 from .forms import ProjectForm
 from .models import Project
-
-
-def can_manage_project(user, project):
-    return (
-        user.is_authenticated
-        and (
-            project.owner_id == user.id
-            or user.is_staff
-            or user.is_superuser
-            or user.has_perm("projects_app.change_project")
-        )
-    )
-
-
-def wants_json(request):
-    return (
-        request.headers.get("x-requested-with") == "XMLHttpRequest"
-        or request.content_type == "application/json"
-        or "application/json" in request.headers.get("accept", "")
-    )
+from .services import can_manage_project, is_project_participant, wants_json
 
 
 def show_all_projects(request):
@@ -42,9 +31,11 @@ def show_all_projects(request):
     if active_skill:
         projects = projects.filter(skills__name=active_skill).distinct()
 
-    paginator = Paginator(projects, 12)
-    page_number = request.GET.get("page")
-    projects_page = paginator.get_page(page_number)
+    projects_page = paginate_queryset(
+        request=request,
+        queryset=projects,
+        per_page=PROJECTS_PER_PAGE,
+    )
 
     all_skills = Skill.objects.all().order_by("name")
 
@@ -67,13 +58,6 @@ def view_project(request, project_id):
         id=project_id,
     )
 
-    is_participant = False
-
-    if request.user.is_authenticated:
-        is_participant = (project.
-                          participants.
-                          filter(id=request.user.id).exists())
-
     return render(
         request,
         "projects/project-details.html",
@@ -81,7 +65,7 @@ def view_project(request, project_id):
             "project": project,
             "skills": project.skills.all(),
             "participants": project.participants.all(),
-            "is_participant": is_participant,
+            "is_participant": is_project_participant(request.user, project),
             "can_manage_project": can_manage_project(request.user, project),
         },
     )
@@ -89,18 +73,15 @@ def view_project(request, project_id):
 
 @login_required
 def create_project(request):
-    if request.method == "POST":
-        form = ProjectForm(request.POST)
+    form = ProjectForm(request.POST or None)
 
-        if form.is_valid():
-            project = form.save(commit=False)
-            project.owner = request.user
-            project.save()
-            project.participants.add(request.user)
+    if form.is_valid():
+        project = form.save(commit=False)
+        project.owner = request.user
+        project.save()
+        project.participants.add(request.user)
 
-            return redirect("projects:project_details", project_id=project.id)
-    else:
-        form = ProjectForm()
+        return redirect("projects:project_details", project_id=project.id)
 
     return render(
         request,
@@ -119,14 +100,12 @@ def edit_project(request, project_id):
     if not can_manage_project(request.user, project):
         return HttpResponseForbidden("Вы не можете редактировать этот проект.")
 
-    if request.method == "POST":
-        form = ProjectForm(request.POST, instance=project)
+    form = ProjectForm(request.POST or None, instance=project)
 
-        if form.is_valid():
-            form.save()
-            return redirect("projects:project_details", project_id=project.id)
-    else:
-        form = ProjectForm(instance=project)
+    if form.is_valid():
+        form.save()
+
+        return redirect("projects:project_details", project_id=project.id)
 
     return render(
         request,
@@ -151,26 +130,26 @@ def complete_project(request, project_id):
                 "message": "Недостаточно прав.",
                 "project_status": project.status,
             },
-            status=403,
+            status=HTTPStatus.FORBIDDEN,
         )
 
-    if project.status != "open":
+    if project.status != PROJECT_STATUS_OPEN:
         return JsonResponse(
             {
                 "status": "error",
                 "message": "Проект уже закрыт.",
                 "project_status": project.status,
             },
-            status=400,
+            status=HTTPStatus.BAD_REQUEST,
         )
 
-    project.status = "closed"
+    project.status = PROJECT_STATUS_CLOSED
     project.save(update_fields=["status"])
 
     return JsonResponse(
         {
             "status": "ok",
-            "project_status": "closed",
+            "project_status": PROJECT_STATUS_CLOSED,
         }
     )
 
@@ -188,12 +167,12 @@ def toggle_participate(request, project_id):
                     "message": "Автор уже является участником проекта.",
                     "participating": True,
                 },
-                status=400,
+                status=HTTPStatus.BAD_REQUEST,
             )
 
         return redirect("projects:project_details", project_id=project.id)
 
-    if project.status != "open":
+    if project.status != PROJECT_STATUS_OPEN:
         if wants_json(request):
             return JsonResponse(
                 {
@@ -201,17 +180,17 @@ def toggle_participate(request, project_id):
                     "message": "Нельзя присоединиться к закрытому проекту.",
                     "participating": False,
                 },
-                status=400,
+                status=HTTPStatus.BAD_REQUEST,
             )
 
         return redirect("projects:project_details", project_id=project.id)
 
-    if project.participants.filter(id=request.user.id).exists():
+    if is_participating := project.participants.filter(id=request.user.id).exists():
         project.participants.remove(request.user)
-        participating = False
     else:
         project.participants.add(request.user)
-        participating = True
+
+    participating = not is_participating
 
     if wants_json(request):
         return JsonResponse(
